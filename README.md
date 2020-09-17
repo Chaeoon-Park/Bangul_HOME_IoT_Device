@@ -12,7 +12,7 @@
 - 본 기기는 HW로 Raspberry Pi 4(OS : Raspbian), Google Coral USB (선택사항 , 연산속도를 4fps에서 12fps 가까이 늘려줍니다.), Servo Motor, Pi Camera를 필요로 합니다.
 - 본 기기는 Object Detection SW Tool 로 TFlite와 동봉된 Sample 모델을 사용합니다. 
 - TFlite와 Google Coral USB를 통한 TPU장치의 사용은 https://github.com/EdjeElectronics/TensorFlow-Lite-Object-Detection-on-Android-and-Raspberry-Pi/blob/master/Raspberry_Pi_Guide.md#part-1---how-to-set-up-and-run-tensorflow-lite-object-detection-models-on-the-raspberry-pi 를 참고하여 설치 합니다. (Open CV의 설치를 포함합니다)
-- git clone `https://github.com/Chaeoon-Park/Bangul_HOME_IoT_Device` 의 src 폴더 내부의 Dog_Tacking_Code.py , Motor_Rotate.py , Bangul_Detect.py 파일을 Raspberry Pi 4의 tflite1 폴더로 이동시킵니다.
+- git clone `https://github.com/Chaeoon-Park/Bangul_HOME_IoT_Device` 의 src 폴더 내부의 파일을 Raspberry Pi 4의 tflite1 폴더에 풀어놓습니다.
 
 ## 사용
  * 폴더 이동 
