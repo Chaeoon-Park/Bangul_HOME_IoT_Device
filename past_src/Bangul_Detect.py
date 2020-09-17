@@ -4,7 +4,6 @@ import cv2
 import numpy as np
 import sys
 import time
-import server_REST_API
 from threading import Thread
 import importlib.util
 import Dog_Tracking_code
@@ -40,31 +39,7 @@ def giveserver(DogFlag, angle) :
     return 
     #얘는 계속 돌리는지랑, 있는지 없는지만 주면 됨.
 
-def Change_Real_Parameter(llx,lly,lrx,lry) :
 
-    fx = 315.51  # focal length x
-    fy = 312.72  # focal length y
-    cx = 335.01  # Principal point x
-    cy = 229.88  # Principal point y
-    h = 1.25 # 카메라 높이 M
-
-    #왼쪽 아래점 변환
-    u1=(llx - cx) / fx
-    v1=(lly - cy) / fy
-    L_Ly = h/v1
-    L_Lx = u1 * L_Ly
-
-    #오른쪽 아래점 변환
-    u1=(lrx - cx) / fx
-    v1=(lry - cy) / fy
-    L_Ry = h/v1
-    L_Rx = u1 * L_Ry
-
-    #중앙점 반환
-    Now_Mid_X = (L_Lx + L_Rx)/2
-    Now_Mid_Y = ((L_Ly + L_Ry)/2)*-1
-
-    return [Now_Mid_X, Now_Mid_Y]
 
 
 # Define VideoStream class to handle streaming of video from webcam in separate processing thread
@@ -202,128 +177,111 @@ videostream = VideoStream(resolution=(imW,imH),framerate=30).start()
 
 #서버에서 기기를 실행시키는 명령이 올때까지는 대기해야합니다. 3초에 한번 정도 간격으로 요청을 보내서 디바이스가 켜져있는지 확인 할 수 있도록 합니다.
 result = dict()
-result['home_running'] = False
+result['home_running'] = True
+result['auto_mode'] = True
 result['re_detect'] = False
+result['track_dog'] = 1
 past_time = time.time()
 recommend_past_time = -1
 now_angle = 90
 
+#for frame1 in camera.capture_continuous(rawCapture, format="bgr",use_video_port=True):
+while True:
+
+    #프론트 기기가 HOME 기기를 사용 할 때 까지, 요청을 보내며 스핀락 형태로 대기합니다
+    while result['home_running'] == False :
+        a=1
+        #giveserver()
+        #time.sleep(3)
+        #past_time = time.time()
+    while result['auto_mode'] == False :
+        a=1
+        #오토모드에서는 카메라 회전만 존재합니다.
+        #giveserver() 로 받아온 명령에 따라 돌아가는 일만 하세요
 
 
-while True :
+    #OpenCV 및 감지 부분
+    # Start timer (for calculating frame rate)
+    t1 = cv2.getTickCount()
+    # Grab frame from video stream
+    frame1 = videostream.read()
+    # Acquire frame and resize to expected shape [1xHxWx3]
+    frame = frame1.copy()
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    frame_resized = cv2.resize(frame_rgb, (width, height))
+    input_data = np.expand_dims(frame_resized, axis=0)
+    # Normalize pixel values if using a floating model (i.e. if model is non-quantized)
+    if floating_model:
+        input_data = (np.float32(input_data) - input_mean) / input_std
+    # Perform the actual detection by running the model with the image as input
+    interpreter.set_tensor(input_details[0]['index'],input_data)
+    interpreter.invoke()
+    # Retrieve detection results
+    boxes = interpreter.get_tensor(output_details[0]['index'])[0] # Bounding box coordinates of detected objects
+    classes = interpreter.get_tensor(output_details[1]['index'])[0] # Class index of detected objects
+    scores = interpreter.get_tensor(output_details[2]['index'])[0] # Confidence of detected objects
+    #num = interpreter.get_tensor(output_details[3]['index'])[0]  # Total number of detected objects (inaccurate and not needed)
+
+    #코드 부분
+
+    gridbox = []
+    measured = []
+    cnt = 0
+    interval = time.time() - past_time
+    past_time = time.time()
+
+    #검출된 객체들중 조건에 맞는 (강아지이며, 검출 점수가 50점 이상) 객체들을 저장합니다.
+    for i in range(len(scores)) :
+        if ((scores[i] > 0.5) and (scores[i] <= 1.0) and labels[int(classes[i])] == 'person'):
+            ymin = int(max(1,(boxes[i][0] * imH)))
+            xmin = int(max(1,(boxes[i][1] * imW)))
+            ymax = int(min(imH,(boxes[i][2] * imH)))
+            xmax = int(min(imW,(boxes[i][3] * imW)))
+            gridbox.append([ymin,xmin,ymax,xmax])
+            measured.append([(xmin+xmax)/2 , ymax])
+
+    #여기서 calculator 처리 해준다
+    #정확도를 올리기 위해서 지금 처음 검출된 친구는 따라가지 않도록 한다.
+    angles,dogs = Dog_Tracking_code.calculator(dogs,measured,gridbox, interval)
+    for i in range(len(dogs)) :
+        hotdog = dogs[i]
+        ymin = hotdog.ymin 
+        xmin = hotdog.xmin 
+        ymax = hotdog.ymax
+        xmax = hotdog.xmax
+        x = hotdog.x
+        y = hotdog.y
+        object_name = "dog" + str(i+1)
+        label = '%s: x: %.2f m , y: %.2f m' % (object_name, x,y) # Example: 'person: 72%'
+        labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2) # Get font size
+        label_ymin = max(ymin, labelSize[1] + 10) # Make sure not to draw label too close to top of window
+        cv2.rectangle(frame, (xmin, label_ymin-labelSize[1]-10), (xmin+labelSize[0], label_ymin+baseLine-10), (255, 255, 255), cv2.FILLED) # Draw white box to put label text in
+        cv2.putText(frame, label, (xmin, label_ymin-7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2) # Draw label textcv2.rectangle(frame, (xmin,ymin), (xmax,ymax), (10, 255, 0), 2)
+
+    if angles[result['track_dog']] != None and angles[result['track_dog']] != 0 :
+        now_angle = motor_rotate.camera_motor_control(now_angle,angles[result['track_dog']])
     
-    if result['home_running'] == False:
-        time.sleep(3)
-        result = server_REST_API.giveserver(0,False)
+    
+    # 사용자의 상태를 받아오고, 강아지 좌표값을 반환합니다
+    # give_server
+    # 재탐색 로직은 서버랑 같이
 
-    if result['home_running'] == True :
-        now_angle = motor_rotate.camera_motor_control(90,0)
-        past_time = time.time()
-
-    #for frame1 in camera.capture_continuous(rawCapture, format="bgr",use_video_port=True):
-    while result['home_running'] == True:
-
-        # Start timer (for calculating frame rate)
-        t1 = cv2.getTickCount()
-
-        # Grab frame from video stream
-        frame1 = videostream.read()
-
-        # Acquire frame and resize to expected shape [1xHxWx3]
-        frame = frame1.copy()
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_resized = cv2.resize(frame_rgb, (width, height))
-        input_data = np.expand_dims(frame_resized, axis=0)
-
-        # Normalize pixel values if using a floating model (i.e. if model is non-quantized)
-        if floating_model:
-            input_data = (np.float32(input_data) - input_mean) / input_std
-
-        # Perform the actual detection by running the model with the image as input
-        interpreter.set_tensor(input_details[0]['index'],input_data)
-        interpreter.invoke()
-
-        # Retrieve detection results
-        boxes = interpreter.get_tensor(output_details[0]['index'])[0] # Bounding box coordinates of detected objects
-        classes = interpreter.get_tensor(output_details[1]['index'])[0] # Class index of detected objects
-        scores = interpreter.get_tensor(output_details[2]['index'])[0] # Confidence of detected objects
-        #num = interpreter.get_tensor(output_details[3]['index'])[0]  # Total number of detected objects (inaccurate and not needed)
-
-        gridbox = []
-        measured = []
-        cnt = 0
-        interval = time.time() - past_time
-        past_time = time.time()
-        for i in range(len(scores)) :
-            if ((scores[i] > 0.5) and (scores[i] <= 1.0) and labels[int(classes[i])] == 'person'):
-                ymin = int(max(1,(boxes[i][0] * imH)))
-                xmin = int(max(1,(boxes[i][1] * imW)))
-                ymax = int(min(imH,(boxes[i][2] * imH)))
-                xmax = int(min(imW,(boxes[i][3] * imW)))
-                gridbox.append([ymin,xmin,ymax,xmax])
-                measured.append(Change_Real_Parameter(xmin,ymin,xmax,ymin))
-                cnt = cnt +1
-        #여기서 calculator 처리 해준다
-        #정확도를 올리기 위해서 지금 처음 검출된 친구는 따라가지 않도록 한다.
-        
-        angle,dogs = Dog_Tracking_code.calculator(dogs,measured,gridbox, interval)
-        
+    
+    
 
 
-        for i in range(len(dogs)) :
-            hotdog = dogs[i]
-            ymin = hotdog.ymin 
-            xmin = hotdog.xmin 
-            ymax = hotdog.ymax
-            xmax = hotdog.xmax
-            x = hotdog.x
-            y = hotdog.y
-            object_name = "dog" + str(i+1)
-            label = '%s: x: %.2f m , y: %.2f m' % (object_name, x,y) # Example: 'person: 72%'
-            labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2) # Get font size
-            label_ymin = max(ymin, labelSize[1] + 10) # Make sure not to draw label too close to top of window
-            cv2.rectangle(frame, (xmin, label_ymin-labelSize[1]-10), (xmin+labelSize[0], label_ymin+baseLine-10), (255, 255, 255), cv2.FILLED) # Draw white box to put label text in
-            cv2.putText(frame, label, (xmin, label_ymin-7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2) # Draw label textcv2.rectangle(frame, (xmin,ymin), (xmax,ymax), (10, 255, 0), 2)
+    # Draw framerate in corner of frame
+    cv2.putText(frame,'FPS: {0:.2f}'.format(frame_rate_calc),(30,50),cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,0),2,cv2.LINE_AA)
+    # All the results have been drawn on the frame, so it's time to display it.
+    cv2.imshow('Object detector', frame)
+    # Calculate framerate
+    t2 = cv2.getTickCount()
+    time1 = (t2-t1)/freq
+    frame_rate_calc= 1/time1
 
-
-        #강아지가 없고, 재탐색명령이 들어와 있는 경우, 현 각도부터 15도씩 회전을 실행한다. 모터에 어짜피 0.25초의 인터벌을 주기 때문에  안에 있다면 충분히 찾을수 있을 것
-        if  result['re_detect'] == True and len(dogs) == 0 :
-            now_angle = motor_rotate.camera_motor_control((now_angle+15)%180, 0)
-            
-        #강아지가 있을 때 모터를 돌리는 과정
-        else if abs(angle) > 10 :
-            now_angle = motor_rotate.camera_motor_control(now_angle, angle/2)
-
-        #오랫동안(5초) 강아지를 검출 하지 못학고 있을 경우 재탐색을 추천한다.
-        detect_recommend = False
-        if len(dogs)== 0 :
-            if recommend_past_time == -1 :
-                recommend_past_time = time.time()
-            else :
-                if time.time() - recommend_past_time > 5 :
-                    detect_recommend = True
-        else :
-            recommend_past_time = -1
-            detect_recommend = False        
-
-        #서버로 재탐색 추천 및 강아지의 숫자를 보낸다.
-        result = server_REST_API.giveserver(len(dogs),detect_recommend)
-
-
-        # Draw framerate in corner of frame
-        cv2.putText(frame,'FPS: {0:.2f}'.format(frame_rate_calc),(30,50),cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,0),2,cv2.LINE_AA)
-
-        # All the results have been drawn on the frame, so it's time to display it.
-        cv2.imshow('Object detector', frame)
-
-        # Calculate framerate
-        t2 = cv2.getTickCount()
-        time1 = (t2-t1)/freq
-        frame_rate_calc= 1/time1
-
-        # Press 'q' to quit
-        if cv2.waitKey(1) == ord('q'):
-            break
+    # Press 'q' to quit
+    if cv2.waitKey(1) == ord('q'):
+        break
 
 # Clean up
 cv2.destroyAllWindows()
