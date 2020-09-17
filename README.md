@@ -20,7 +20,7 @@
  * 가상 환경 접속
  source tflite1-env/bin/activate
  * 실행
- python3 Bangul_Detect.py --modeldir=Sample_TFLite_model --edgetpu
+ python3 bangul_home_iot.py --modeldir=Sample_TFLite_model --edgetpu
 
 
 ## 실행 영상
